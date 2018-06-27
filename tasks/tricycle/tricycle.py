@@ -21,7 +21,8 @@ class TMonitorConfig(Config):
     继承并重载Config类
     """
     # 该配置的名字
-    NAME = "TMonitor"
+    DATA_NAME = "TMonitor" 
+    TASK_NAME = "tricycle"
 
     # 在一个GPU上训练，每个GPU训练8张数据
     # Batch size 为 4 (GPUs * images/GPU).
@@ -38,7 +39,7 @@ class TMonitorConfig(Config):
     RPN_ANCHOR_SCALES = (64, 128, 256, 512, 1024)  # anchor的像素边长
     
     # 检测目标的置信度
-    DETECTION_MIN_CONFIDENCE = 0.95
+    DETECTION_MIN_CONFIDENCE = 0.975
     
 
 class TMonitorDataset(utils.Dataset):
@@ -82,34 +83,6 @@ class TMonitorDataset(utils.Dataset):
             objs = json_data['outputs']['object'] #检测目标
             self.add_image("TMonitor", image_id=image_id, path=path,
                            width=width, height=height, objs=objs)
-
-    def load_objs(self, info_id, scale, padding):
-        """加载单张图片中的目标类别标签和bbox
-        args：
-            info_id：图片的id（该id对应image_info中的对象：0,1,2,3...)
-            scale：resize的比例
-            padding：padding的大小
-        return：
-            class_ids:目标的类别
-            bboxes：类别对应的bounding box
-        """
-        class_ids = []
-        bboxes = []
-        info = self.image_info[info_id]
-        shape = [info['height'], info['width']]
-        objs = info['objs']
-        for obj in objs:
-            class_name = obj['name']
-            for i in self.class_info:
-                if i['name'] == class_name:
-                    class_id = i['id']
-                    class_ids.append(class_id)
-            y1,x1,y2,x2 = obj['bndbox']['ymin'],obj['bndbox']['xmin'],\
-                          obj['bndbox']['ymax'],obj['bndbox']['xmax']
-            bboxes.append(np.array([y1,x1,y2,x2]))
-        bboxes = utils.resize_bboxes(bboxes, shape, scale, padding)
-        class_ids = np.array(class_ids)
-        return class_ids, bboxes
     
     
     
