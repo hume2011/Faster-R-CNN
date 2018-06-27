@@ -1,0 +1,1 @@
+{"path":"/home/huyu/dl/project/ZJ-TWB-Detection-End2End/test_images/testimg-10.jpg","outputs":{"object":[{"name":"TWB","bndbox":{"xmin":941,"ymin":319,"xmax":1015,"ymax":385}},{"name":"TWB","bndbox":{"xmin":1077,"ymin":374,"xmax":1158,"ymax":494}}]},"time_labeled":1529460394846,"labeled":true,"size":{"width":1280,"height":720,"depth":3}}
