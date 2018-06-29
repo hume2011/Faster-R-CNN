@@ -29,12 +29,12 @@ assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
 
 ############################################################
-#  Utility Functions
+#  实用方法
 ############################################################
 
 def log(text, array=None):
-    """Prints a text message. And, optionally, if a Numpy array is provided it
-    prints it's shape, min, and max values.
+    """打印文本。
+    如果array不为None，则打印出array中的信息。
     """
     if array is not None:
         text = text.ljust(25)
@@ -47,30 +47,26 @@ def log(text, array=None):
 
 
 class BatchNorm(KL.BatchNormalization):
-    """Extends the Keras BatchNormalization class to allow a central place
-    to make changes if needed.
-
-    Batch normalization has a negative effect on training if batches are small
-    so this layer is often frozen (via setting in Config class) and functions
-    as linear layer.
+    """扩展Keras BatchNormalization Class以允许中心位置根据需要进行更改。
+    如果batch很小，BN层会产生负面效果，该项目中的batch通常很小，所以一般会
+    冻结该layer（在配置项中设置）并用作linear层。
     """
     def call(self, inputs, training=None):
         """
-        Note about training values:
-            None: Train BN layers. This is the normal mode
-            False: Freeze BN layers. Good when batch size is small
-            True: (don't use). Set layer in training mode even when inferencing
+        training:
+            None: 训练BN layers，常规设置。
+            False: 冻结BN layers，batch size较小时。
+            True: (忽略该项)，即使在预测时也会设置为训练模式。
         """
         return super(self.__class__, self).call(inputs, training=training)
 
 
 def compute_backbone_shapes(config, image_shape):
-    """Computes the width and height of each stage of the backbone network.
-    
+    """计算backbone的width和height。
     Returns:
-        [N, (height, width)]. Where N is the number of stages
+        [N, (height, width)]。N为backnone的stage数。
     """
-    # Currently supports ResNet only
+    # 目前只支持resnet50和resnet101
     assert config.BACKBONE in ["resnet50", "resnet101"]
     return np.array(
         [[int(math.ceil(image_shape[0] / stride)),
@@ -82,20 +78,20 @@ def compute_backbone_shapes(config, image_shape):
 #  Resnet Graph
 ############################################################
 
-# Code adopted from:
+# 代码参考自:
 # https://github.com/fchollet/deep-learning-models/blob/master/resnet50.py
 
 def identity_block(input_tensor, kernel_size, filters, stage, block,
                    use_bias=True, train_bn=True):
-    """The identity_block is the block that has no conv layer at shortcut
-    # Arguments
-        input_tensor: input tensor
-        kernel_size: defualt 3, the kernel size of middle conv layer at main path
-        filters: list of integers, the nb_filters of 3 conv layer at main path
-        stage: integer, current stage label, used for generating layer names
-        block: 'a','b'..., current block label, used for generating layer names
-        use_bias: Boolean. To use or not use a bias in conv layers.
-        train_bn: Boolean. Train or freeze Batch Norm layres
+    """identity_block是在shortcut上没有卷积层的模块。
+    # Argments
+        input_tensor: 输入tensor
+        kernel_size: 默认为3，主main path的中间卷积层的内核大小。
+        filters: int型的list，main path上3个卷积层的filter数量。
+        stage: int型,当前的stage label，用于命名。
+        block: 'a','b'...，当前的block label用于命名。
+        use_bias: Bool型，卷积层中是否使用bias。
+        train_bn: Bool型，是否训练BN层。
     """
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -122,17 +118,16 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
 
 def conv_block(input_tensor, kernel_size, filters, stage, block,
                strides=(2, 2), use_bias=True, train_bn=True):
-    """conv_block is the block that has a conv layer at shortcut
-    # Arguments
-        input_tensor: input tensor
-        kernel_size: defualt 3, the kernel size of middle conv layer at main path
-        filters: list of integers, the nb_filters of 3 conv layer at main path
-        stage: integer, current stage label, used for generating layer names
-        block: 'a','b'..., current block label, used for generating layer names
-        use_bias: Boolean. To use or not use a bias in conv layers.
-        train_bn: Boolean. Train or freeze Batch Norm layres
-    Note that from stage 3, the first conv layer at main path is with subsample=(2,2)
-    And the shortcut should have subsample=(2,2) as well
+    """conv_block是在shortcut上有卷积层的模块。
+    # Argments
+        input_tensor: 输入tensor
+        kernel_size: 默认为3，主main path的中间卷积层的内核大小。
+        filters: int型的list，main path上3个卷积层的filter数量。
+        stage: int型,当前的stage label，用于命名。
+        block: 'a','b'...，当前的block label用于命名。
+        use_bias: Bool型，卷积层中是否使用bias。
+        train_bn: Bool型，是否训练BN层。
+    从stage3开始，main path中第一个卷积层的subsample=(2,2)，同样shortcut中的subsample=(2,2)。
     """
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -162,10 +157,10 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
 
 
 def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
-    """Build a ResNet graph.
-        architecture: Can be resnet50 or resnet101
-        stage5: Boolean. If False, stage5 of the network is not created
-        train_bn: Boolean. Train or freeze Batch Norm layres
+    """ResNet graph
+        architecture: 可以是resnet50或resnet101。
+        stage5: Bool型，如果为False，不创建stage5。
+        train_bn: Bool型，是否训练BN层。
     """
     assert architecture in ["resnet50", "resnet101"]
     # Stage 1
@@ -204,21 +199,21 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
 ############################################################
 
 def apply_box_deltas_graph(boxes, deltas):
-    """Applies the given deltas to the given boxes.
-    boxes: [N, (y1, x1, y2, x2)] boxes to update
-    deltas: [N, (dy, dx, log(dh), log(dw))] refinements to apply
+    """提供deltas并校准boxes。
+    boxes: [N, (y1, x1, y2, x2)]
+    deltas: [N, (dy, dx, log(dh), log(dw))
     """
-    # Convert to y, x, h, w
+    # 转换成y, x, h, w
     height = boxes[:, 2] - boxes[:, 0]
     width = boxes[:, 3] - boxes[:, 1]
     center_y = boxes[:, 0] + 0.5 * height
     center_x = boxes[:, 1] + 0.5 * width
-    # Apply deltas
+    # 应用校准参数
     center_y += deltas[:, 0] * height
     center_x += deltas[:, 1] * width
     height *= tf.exp(deltas[:, 2])
     width *= tf.exp(deltas[:, 3])
-    # Convert back to y1, x1, y2, x2
+    # 再转换成y1, x1, y2, x2
     y1 = center_y - 0.5 * height
     x1 = center_x - 0.5 * width
     y2 = y1 + height
@@ -230,7 +225,7 @@ def apply_box_deltas_graph(boxes, deltas):
 def clip_boxes_graph(boxes, window):
     """
     boxes: [N, (y1, x1, y2, x2)]
-    window: [4] in the form y1, x1, y2, x2
+    window: [4]，格式为y1, x1, y2, x2
     """
     # Split
     wy1, wx1, wy2, wx2 = tf.split(window, 4)
@@ -246,10 +241,9 @@ def clip_boxes_graph(boxes, window):
 
 
 class ProposalLayer(KE.Layer):
-    """Receives anchor scores and selects a subset to pass as proposals
-    to the second stage. Filtering is done based on anchor scores and
-    non-max suppression to remove overlaps. It also applies bounding
-    box refinement deltas to anchors.
+    """接收anchor scores并选择一个子集作为proposals传递给下一阶段，
+    通过anchor scores阀值和NMS算法过滤掉重叠的选框，同样也向anchors
+    提供了用作bbox校准的参数deltas。
 
     Inputs:
         rpn_probs: [batch, anchors, (bg prob, fg prob)]
@@ -257,7 +251,7 @@ class ProposalLayer(KE.Layer):
         anchors: [batch, (y1, x1, y2, x2)] anchors in normalized coordinates
 
     Returns:
-        Proposals in normalized coordinates [batch, rois, (y1, x1, y2, x2)]
+        坐标标准化后的Proposals，[batch, rois, (y1, x1, y2, x2)]
     """
 
     def __init__(self, proposal_count, nms_threshold, config=None, **kwargs):
@@ -267,7 +261,7 @@ class ProposalLayer(KE.Layer):
         self.nms_threshold = nms_threshold
 
     def call(self, inputs):
-        # Box Scores. Use the foreground class confidence. [Batch, num_rois, 1]
+        # Box Scores，用前景FG的置信度，[Batch, num_rois, 1]
         scores = inputs[0][:, :, 1]
         # Box deltas [batch, num_rois, 4]
         deltas = inputs[1]
@@ -275,8 +269,7 @@ class ProposalLayer(KE.Layer):
         # Anchors
         anchors = inputs[2]
 
-        # Improve performance by trimming to top anchors by score
-        # and doing the rest on the smaller subset.
+        # 通过score来按比例修剪顶部anchors得到较小的子集，从而提高性能。
         pre_nms_limit = tf.minimum(6000, tf.shape(anchors)[1])
         ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True,
                          name="top_anchors").indices
@@ -288,26 +281,22 @@ class ProposalLayer(KE.Layer):
                                     self.config.IMAGES_PER_GPU,
                                     names=["pre_nms_anchors"])
 
-        # Apply deltas to anchors to get refined anchors.
+        # 将deltas传递给anchors以得到调整后的anchors。
         # [batch, N, (y1, x1, y2, x2)]
         boxes = utils.batch_slice([pre_nms_anchors, deltas],
                                   lambda x, y: apply_box_deltas_graph(x, y),
                                   self.config.IMAGES_PER_GPU,
                                   names=["refined_anchors"])
 
-        # Clip to image boundaries. Since we're in normalized coordinates,
-        # clip to 0..1 range. [batch, N, (y1, x1, y2, x2)]
+        # 将数据剪切到图像边界，由于使用使用标准化坐标中，所以应该剪切在0到1的范围内。
+        # [batch, N, (y1, x1, y2, x2)]
         window = np.array([0, 0, 1, 1], dtype=np.float32)
         boxes = utils.batch_slice(boxes,
                                   lambda x: clip_boxes_graph(x, window),
                                   self.config.IMAGES_PER_GPU,
                                   names=["refined_anchors_clipped"])
 
-        # Filter out small boxes
-        # According to Xinlei Chen's paper, this reduces detection accuracy
-        # for small objects, so we're skipping it.
-
-        # Non-max suppression
+        # 非极大值抑制（Non-max suppression）
         def nms(boxes, scores):
             indices = tf.image.non_max_suppression(
                 boxes, scores, self.proposal_count,
@@ -330,28 +319,26 @@ class ProposalLayer(KE.Layer):
 ############################################################
 
 def log2_graph(x):
-    """Implementatin of Log2. TF doesn't have a native implemenation."""
+    """实现log2，tensorflow中没有实现log2"""
     return tf.log(x) / tf.log(2.0)
 
 
 class PyramidROIAlign(KE.Layer):
-    """Implements ROI Pooling on multiple levels of the feature pyramid.
+    """ROI Pooling在多层feature pyramid上实现ROI Pooling。
 
     Params:
-    - pool_shape: [height, width] of the output pooled regions. Usually [7, 7]
+    - pool_shape: pool的尺寸，这里一般是[7, 7]
 
     Inputs:
-    - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
-             coordinates. Possibly padded with zeros if not enough
-             boxes to fill the array.
-    - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-    - Feature maps: List of feature maps from different levels of the pyramid.
-                    Each is [batch, height, width, channels]
+    - boxes: [batch, num_boxes, (y1, x1, y2, x2)]，标准化后的坐标，如果
+             boxes数量不够可能会优零填充（zero padding）
+    - image_meta: [batch, (meta data)] Image的性能系，详见compose_image_meta()
+    - Feature maps: List，存放特征金字塔各阶段的feature map，
+                    [batch, height, width, channels]
 
     Output:
-    Pooled regions in the shape: [batch, num_boxes, height, width, channels].
-    The width and height are those specific in the pool_shape in the layer
-    constructor.
+    池化后的regions: [batch, num_boxes, height, width, channels]，
+    width和height在这一层的构造函数的pool_shape中是特定的。
     """
 
     def __init__(self, pool_shape, **kwargs):
@@ -359,82 +346,79 @@ class PyramidROIAlign(KE.Layer):
         self.pool_shape = tuple(pool_shape)
 
     def call(self, inputs):
-        # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
+        # 在标准化坐标中裁剪（crop）boxes，[batch, num_boxes, (y1, x1, y2, x2)]
         boxes = inputs[0]
 
         # Image meta
-        # Holds details about the image. See compose_image_meta()
+        # 存放iamge的详细信息，详见compose_image_meta()
         image_meta = inputs[1]
 
-        # Feature Maps. List of feature maps from different level of the
-        # feature pyramid. Each is [batch, height, width, channels]
+        # List，存放特征金字塔各阶段的feature map，[batch, height, width, channels]
         feature_maps = inputs[2:]
 
-        # Assign each ROI to a level in the pyramid based on the ROI area.
+        # 根据ROI area将每个ROI分配到金字塔中不同阶段
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
         h = y2 - y1
         w = x2 - x1
-        # Use shape of first image. Images in a batch must have the same size.
+        # 第一个image的shape，一个batch中的images应该有相同的尺寸
         image_shape = parse_image_meta_graph(image_meta)['image_shape'][0]
-        # Equation 1 in the Feature Pyramid Networks paper. Account for
-        # the fact that our coordinates are normalized here.
-        # e.g. a 224x224 ROI (in pixels) maps to P4
+        # Feature Pyramid Networks论文中的Equation 1
+        # 考虑到我们的坐标在这里被标准化
+        # 例如，一个224x224的ROI对应P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
         roi_level = tf.minimum(5, tf.maximum(
             2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         roi_level = tf.squeeze(roi_level, 2)
 
-        # Loop through levels and apply ROI pooling to each. P2 to P5.
+        # 循环P2到P5并向每个阶段传递ROI
         pooled = []
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
             ix = tf.where(tf.equal(roi_level, level))
             level_boxes = tf.gather_nd(boxes, ix)
 
-            # Box indicies for crop_and_resize.
+            # Box的索引，用于crop_and_resize
             box_indices = tf.cast(ix[:, 0], tf.int32)
 
-            # Keep track of which box is mapped to which level
+            # 记录box对应哪个阶段
             box_to_level.append(ix)
 
-            # Stop gradient propogation to ROI proposals
+            # 停止梯度传播到ROI proposals
             level_boxes = tf.stop_gradient(level_boxes)
             box_indices = tf.stop_gradient(box_indices)
 
-            # Crop and Resize
-            # From Mask R-CNN paper: "We sample four regular locations, so
+            # Crop和Resize
+            # Mask R-CNN论文中提到: "We sample four regular locations, so
             # that we can evaluate either max or average pooling. In fact,
             # interpolating only a single value at each bin center (without
             # pooling) is nearly as effective."
             #
-            # Here we use the simplified approach of a single value per bin,
-            # which is how it's done in tf.crop_and_resize()
-            # Result: [batch * num_boxes, pool_height, pool_width, channels]
+            # 这里使用每个bin的单个值的简化方法，在tf.crop_and_resize（）中完成
+            # 结果: [batch * num_boxes, pool_height, pool_width, channels]
             pooled.append(tf.image.crop_and_resize(
                 feature_maps[i], level_boxes, box_indices, self.pool_shape,
                 method="bilinear"))
 
-        # Pack pooled features into one tensor
+        # 将pooled features放入一个tensor中
         pooled = tf.concat(pooled, axis=0)
 
-        # Pack box_to_level mapping into one array and add another
-        # column representing the order of pooled boxes
+        # 将box_to_level映射到一个array中， 并添加另一列表示pooled boxes的顺序
         box_to_level = tf.concat(box_to_level, axis=0)
         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range],
                                  axis=1)
 
-        # Rearrange pooled features to match the order of the original boxes
-        # Sort box_to_level by batch then box index
-        # TF doesn't have a way to sort by two columns, so merge them and sort.
+        # 重新排列pooled features以匹配原始boxes的顺序
+        # 按batch给box_to_level排序，然后按索引排序
+        # tensorflow没有按两列进行排序的方法，因此将它们合并再排序
         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
             box_to_level)[0]).indices[::-1]
         ix = tf.gather(box_to_level[:, 2], ix)
         pooled = tf.gather(pooled, ix)
 
-        # Re-add the batch dimension
+        # 重新添加batch dimension
         pooled = tf.expand_dims(pooled, 0)
         return pooled
 
@@ -735,10 +719,6 @@ class DetectionLayer(KE.Layer):
 
     def call(self, inputs):
         rois = inputs[0]
-        '''
-        mrcnn_class = inputs[1]
-        mrcnn_bbox = inputs[2]
-        '''
         frcnn_class = inputs[1]
         frcnn_bbox = inputs[2]
         image_meta = inputs[3]
@@ -1069,7 +1049,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None):
         logging.warning("'augment' is depricated. Use 'augmentation' instead.")
         if random.randint(0, 1):
             image = np.fliplr(image)
-
+    
     # Augmentation
     # This requires the imgaug lib (https://github.com/aleju/imgaug)
     # TODO: modify for bboxes without mask.
@@ -1615,8 +1595,8 @@ class FasterRCNN():
                             "For example, use 256, 320, 384, 448, 512, ... etc. ")
 
         # 输入
-        input_image = KL.Input(
-            shape=[None, None, 3], name="input_image")
+        input_image = KL.Input(shape=[None, None, 3],
+                               name="input_image")
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE],
                                     name="input_image_meta")
         if mode == "training":
@@ -1801,7 +1781,7 @@ class FasterRCNN():
         """
         # Get directory names. Each directory corresponds to a model
         dir_names = next(os.walk(self.model_dir))[1]
-        key = self.config.TASK_NAME.lower()
+        key = self.config.DATA_NAME.lower()
         dir_names = filter(lambda f: f.startswith(key), dir_names)
         dir_names = sorted(dir_names)
         if not dir_names:
