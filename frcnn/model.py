@@ -431,17 +431,16 @@ class PyramidROIAlign(KE.Layer):
 ############################################################
 
 def overlaps_graph(boxes1, boxes2):
-    """Computes IoU overlaps between two sets of boxes.
-    boxes1, boxes2: [N, (y1, x1, y2, x2)].
+    """计算两个boxes的集合的RoI overlaps。
+    boxes1, boxes2: [N, (y1, x1, y2, x2)]
     """
-    # 1. Tile boxes2 and repeate boxes1. This allows us to compare
-    # every boxes1 against every boxes2 without loops.
-    # TF doesn't have an equivalent to np.repeate() so simulate it
-    # using tf.tile() and tf.reshape.
+    # 1. Tile boxes2 并repeate boxes1。
+    # 这让我们可以不循环就可boxes1和boxes2中的每个box之间比较 。
+    # TF没有类似于np.repeate()函数，tf.tile() 和 tf.reshape代替。
     b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1),
                             [1, 1, tf.shape(boxes2)[0]]), [-1, 4])
     b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1])
-    # 2. Compute intersections
+    # 2. 计算交集
     b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
     b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
     y1 = tf.maximum(b1_y1, b2_y1)
@@ -449,35 +448,35 @@ def overlaps_graph(boxes1, boxes2):
     y2 = tf.minimum(b1_y2, b2_y2)
     x2 = tf.minimum(b1_x2, b2_x2)
     intersection = tf.maximum(x2 - x1, 0) * tf.maximum(y2 - y1, 0)
-    # 3. Compute unions
+    # 3. 计算并集
     b1_area = (b1_y2 - b1_y1) * (b1_x2 - b1_x1)
     b2_area = (b2_y2 - b2_y1) * (b2_x2 - b2_x1)
     union = b1_area + b2_area - intersection
-    # 4. Compute IoU and reshape to [boxes1, boxes2]
+    # 4. 计算IoU并reshape为[boxes1，boxes2]
     iou = intersection / union
     overlaps = tf.reshape(iou, [tf.shape(boxes1)[0], tf.shape(boxes2)[0]])
     return overlaps
 
 
 def detection_targets_graph(proposals, gt_class_ids, gt_boxes, config):
-    """Generates detection targets for one image. Subsamples proposals and
-    generates target class IDs, bounding box deltas for each.
+    """生成单张图片的检测目标。
+    对proposals抽样,并生成class ids，boubding box deltas。
 
     Inputs:
-    proposals: [N, (y1, x1, y2, x2)] in normalized coordinates. Might
-               be zero padded if there are not enough proposals.
-    gt_class_ids: [MAX_GT_INSTANCES] int class IDs
-    gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
+    proposals: [N, (y1, x1, y2, x2)]，归一化后的坐标值，如果没有足够的proposals
+                可能会被zero pad。
+    gt_class_ids: [MAX_GT_INSTANCES]，真实类别，int型。
+    gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)]，归一化后的坐标值。
 
-    Returns: Target ROIs and corresponding class IDs, bounding box shifts.
-    rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
-    class_ids: [TRAIN_ROIS_PER_IMAGE]. Integer class IDs. Zero padded.
-    deltas: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
-            Class-specific bbox refinements.
+    Returns: 目标ROIs和对应的class IDs, bounding box偏移量。
+    rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]，归一化后的坐标值。
+    class_ids: [TRAIN_ROIS_PER_IMAGE]。int型class IDs，Zero padded。
+    deltas: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]，
+            bbox的refinement。
 
-    Note: Returned arrays might be zero padded if not enough target ROIs.
+    Note: 如果没有足够的目标RoI，可能返回的数组是zero padding。
     """
-    # Assertions
+    # 判定
     asserts = [
         tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals],
                   name="roi_assertion"),
@@ -485,22 +484,22 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, config):
     with tf.control_dependencies(asserts):
         proposals = tf.identity(proposals)
 
-    # Remove zero padding
+    # 去掉zero padding
     proposals, _ = trim_zeros_graph(proposals, name="trim_proposals")
     gt_boxes, non_zeros = trim_zeros_graph(gt_boxes, name="trim_gt_boxes")
     gt_class_ids = tf.boolean_mask(gt_class_ids, non_zeros,
                                    name="trim_gt_class_ids")
 
-    # Handle COCO crowds
-    # A crowd box in COCO is a bounding box around several instances. Exclude
-    # them from training. A crowd box is given a negative class ID.
+    # 处理COCO的crowds类。
+    # COCO中的crowd box是对应几个对象的bouding box，将其从训练中去掉。
+    # 给crowd box赋予negative class ID。
     crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
     non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
     crowd_boxes = tf.gather(gt_boxes, crowd_ix)
     gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
     gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
 
-    # Compute overlaps matrix [proposals, gt_boxes]
+    # 计算重叠矩阵 [proposals, gt_boxes]
     overlaps = overlaps_graph(proposals, gt_boxes)
 
     # Compute overlaps with crowd boxes [anchors, crowds]
@@ -508,40 +507,40 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, config):
     crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
     no_crowd_bool = (crowd_iou_max < 0.001)
 
-    # Determine postive and negative ROIs
+    # 确定ROIs是正/负样本
     roi_iou_max = tf.reduce_max(overlaps, axis=1)
-    # 1. Positive ROIs are those with >= 0.7 IoU with a GT box
+    # 1. 正样本与GT box的IoU >= 0.7
     positive_roi_bool = (roi_iou_max >= 0.7)
     positive_indices = tf.where(positive_roi_bool)[:, 0]
-    # 2. Negative ROIs are those with < 0.3 with every GT box. Skip crowds.
+    # 2. 正样本与GT box的IoU <= 0.3
     negative_indices = tf.where(tf.logical_and(roi_iou_max < 0.3, no_crowd_bool))[:, 0]
 
-    # Subsample ROIs. Aim for 33% positive
-    # Positive ROIs
+    # 对ROIs抽样，得到33%的正样本
+    # 正样本ROIs
     positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
                          config.ROI_POSITIVE_RATIO)
     positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
     positive_count = tf.shape(positive_indices)[0]
-    # Negative ROIs. Add enough to maintain positive:negative ratio.
+    # 负样本ROIs，适当抽样一保证positive:negative ratio
     r = 1.0 / config.ROI_POSITIVE_RATIO
     negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
     negative_indices = tf.random_shuffle(negative_indices)[:negative_count]
-    # Gather selected ROIs
+    # 抽出选好的ROIs
     positive_rois = tf.gather(proposals, positive_indices)
     negative_rois = tf.gather(proposals, negative_indices)
 
-    # Assign positive ROIs to GT boxes.
+    # 将正样本ROIs 分配给 GT boxes.
     positive_overlaps = tf.gather(overlaps, positive_indices)
     roi_gt_box_assignment = tf.argmax(positive_overlaps, axis=1)
     roi_gt_boxes = tf.gather(gt_boxes, roi_gt_box_assignment)
     roi_gt_class_ids = tf.gather(gt_class_ids, roi_gt_box_assignment)
 
-    # Compute bbox refinement for positive ROIs
+    # 计算正样本ROIs的bbox的调整系数
     deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
     deltas /= config.BBOX_STD_DEV
 
-    # Append negative ROIs and pad bbox deltas that
-    # are not used for negative ROIs with zeros.
+    # 加入负样本ROIs
+    # 并zero pad不用于负样本ROIs的bbox deltas
     rois = tf.concat([positive_rois, negative_rois], axis=0)
     N = tf.shape(negative_rois)[0]
     P = tf.maximum(config.TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
@@ -554,25 +553,22 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, config):
 
 
 class DetectionTargetLayer(KE.Layer):
-    """Subsamples proposals and generates target box refinement, class_ids
-    for each.
+    """对proposals抽样，并生成每个样本的目标box refinement和class_ids。
 
     Inputs:
-    proposals: [batch, N, (y1, x1, y2, x2)] in normalized coordinates. Might
-               be zero padded if there are not enough proposals.
-    gt_class_ids: [batch, MAX_GT_INSTANCES] Integer class IDs.
-    gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized
-              coordinates.
+    proposals: [batch, N, (y1, x1, y2, x2)]，归一化后的坐标值，
+                如果没有足够的proposals可能会被zero pad。
+    gt_class_ids: [batch, MAX_GT_INSTANCES]，真实类别，int型。
+    gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)]，归一化后的坐标值。
 
-    Returns: Target ROIs and corresponding class IDs, bounding box shifts.
-    rois: [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized
-          coordinates
-    target_class_ids: [batch, TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
+    Returns: 目标ROIs和对应的class IDs, bounding box偏移量。
+    rois: [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]，归一化后的坐标值。
+    target_class_ids: [batch, TRAIN_ROIS_PER_IMAGE]，int型class IDs。
     target_deltas: [batch, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES,
-                    (dy, dx, log(dh), log(dw), class_id)]
-                   Class-specific bbox refinements.
+                    (dy, dx, log(dh), log(dw), class_id)]，
+                   bbox的refinement，对应特定类。
 
-    Note: Returned arrays might be zero padded if not enough target ROIs.
+    Note: 如果没有足够的目标RoI，可能返回的数组是zero padding。
     """
 
     def __init__(self, config, **kwargs):
@@ -584,8 +580,8 @@ class DetectionTargetLayer(KE.Layer):
         gt_class_ids = inputs[1]
         gt_boxes = inputs[2]
         
-        # Slice the batch and run a graph for each slice
-        # TODO: Rename target_bbox to target_deltas for clarity
+        # 切取batch并在每一个切片上运行graph
+        # TODO: 为清楚起见，将target_bbox重命名为target_deltas
         names = ["rois", "target_class_ids", "target_bbox"]
         outputs = utils.batch_slice(
             [proposals, gt_class_ids, gt_boxes],
@@ -607,110 +603,106 @@ class DetectionTargetLayer(KE.Layer):
 ############################################################
 
 def refine_detections_graph(rois, probs, deltas, window, config):
-    """Refine classified proposals and filter overlaps and return final
-    detections.
+    """提炼分类好的proposals并过滤重叠并返回最终检测。
 
     Inputs:
-        rois: [N, (y1, x1, y2, x2)] in normalized coordinates
-        probs: [N, num_classes]. Class probabilities.
-        deltas: [N, num_classes, (dy, dx, log(dh), log(dw))]. Class-specific
-                bounding box deltas.
-        window: (y1, x1, y2, x2) in image coordinates. The part of the image
-            that contains the image excluding the padding.
-
-    Returns detections shaped: [N, (y1, x1, y2, x2, class_id, score)] where
-        coordinates are normalized.
+        rois: [N, (y1, x1, y2, x2)]，归一化后的坐标值。
+        probs: [N, num_classes]，类别的概率。
+        deltas: [N, num_classes, (dy, dx, log(dh), log(dw))]，特定bounding box调整系数。
+        window: (y1, x1, y2, x2)，像素坐标值，图像中包含除填充之外的图像的部分。
+    Returns：
+        detections shaped: [N, (y1, x1, y2, x2, class_id, score)]，
+                            归一化后的坐标值。
     """
-    # Class IDs per ROI
+    # 每个ROI的Class IDs
     class_ids = tf.argmax(probs, axis=1, output_type=tf.int32)
-    # Class probability of the top class of each ROI
+    # 每个ROI中排名靠前的类别的概率
     indices = tf.stack([tf.range(probs.shape[0]), class_ids], axis=1)
     class_scores = tf.gather_nd(probs, indices)
-    # Class-specific bounding box deltas
+    # 特定类别的bounding box deltas
     deltas_specific = tf.gather_nd(deltas, indices)
-    # Apply bounding box deltas
-    # Shape: [boxes, (y1, x1, y2, x2)] in normalized coordinates
+    # 提供bounding box deltas
+    # Shape: [boxes, (y1, x1, y2, x2)]，归一化后的坐标值。
     refined_rois = apply_box_deltas_graph(
         rois, deltas_specific * config.BBOX_STD_DEV)
-    # Clip boxes to image window
+    # 将boxes剪切在image window内
     refined_rois = clip_boxes_graph(refined_rois, window)
 
-    # TODO: Filter out boxes with zero area
+    # TODO: 过滤掉有zero area的boxes
 
-    # Filter out background boxes
+    # 过滤掉背景boxes
     keep = tf.where(class_ids > 0)[:, 0]
-    # Filter out low confidence boxes
+    # 过滤掉置信度低的boxes
     if config.DETECTION_MIN_CONFIDENCE:
         conf_keep = tf.where(class_scores >= config.DETECTION_MIN_CONFIDENCE)[:, 0]
         keep = tf.sets.set_intersection(tf.expand_dims(keep, 0),
                                         tf.expand_dims(conf_keep, 0))
         keep = tf.sparse_tensor_to_dense(keep)[0]
 
-    # Apply per-class NMS
-    # 1. Prepare variables
+    # 对每个类别应用NMS
+    # 1. 创建变量
     pre_nms_class_ids = tf.gather(class_ids, keep)
     pre_nms_scores = tf.gather(class_scores, keep)
     pre_nms_rois = tf.gather(refined_rois,   keep)
     unique_pre_nms_class_ids = tf.unique(pre_nms_class_ids)[0]
 
     def nms_keep_map(class_id):
-        """Apply Non-Maximum Suppression on ROIs of the given class."""
-        # Indices of ROIs of the given class
+        """对给定类的ROIs应用非最大抑制。"""
+        # 给定类别的ROIs索引
         ixs = tf.where(tf.equal(pre_nms_class_ids, class_id))[:, 0]
-        # Apply NMS
+        # 应用NMS
         class_keep = tf.image.non_max_suppression(
                 tf.gather(pre_nms_rois, ixs),
                 tf.gather(pre_nms_scores, ixs),
                 max_output_size=config.DETECTION_MAX_INSTANCES,
                 iou_threshold=config.DETECTION_NMS_THRESHOLD)
-        # Map indicies
+        # 映射索引
         class_keep = tf.gather(keep, tf.gather(ixs, class_keep))
-        # Pad with -1 so returned tensors have the same shape
+        # 用-1做pad，这样返回的张量具有相同的shape
         gap = config.DETECTION_MAX_INSTANCES - tf.shape(class_keep)[0]
         class_keep = tf.pad(class_keep, [(0, gap)],
                             mode='CONSTANT', constant_values=-1)
-        # Set shape so map_fn() can infer result shape
+        # 设置shape，以便map_fn（）可以推断结果shape
         class_keep.set_shape([config.DETECTION_MAX_INSTANCES])
         return class_keep
 
-    # 2. Map over class IDs
+    # 2. 映射class IDs
     nms_keep = tf.map_fn(nms_keep_map, unique_pre_nms_class_ids,
                          dtype=tf.int64)
-    # 3. Merge results into one list, and remove -1 padding
+    # 3. 将结果合并到一个列表中，并去掉-1 padding
     nms_keep = tf.reshape(nms_keep, [-1])
     nms_keep = tf.gather(nms_keep, tf.where(nms_keep > -1)[:, 0])
-    # 4. Compute intersection between keep and nms_keep
+    # 4. 计算keep和nms_keep之间的交集
     keep = tf.sets.set_intersection(tf.expand_dims(keep, 0),
                                     tf.expand_dims(nms_keep, 0))
     keep = tf.sparse_tensor_to_dense(keep)[0]
-    # Keep top detections
+    # 保留靠前的detections
     roi_count = config.DETECTION_MAX_INSTANCES
     class_scores_keep = tf.gather(class_scores, keep)
     num_keep = tf.minimum(tf.shape(class_scores_keep)[0], roi_count)
     top_ids = tf.nn.top_k(class_scores_keep, k=num_keep, sorted=True)[1]
     keep = tf.gather(keep, top_ids)
 
-    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
-    # Coordinates are normalized.
+    # 将输出排列为[N, (y1, x1, y2, x2, class_id, score)]
+    # 归一化后的坐标值
     detections = tf.concat([
         tf.gather(refined_rois, keep),
         tf.to_float(tf.gather(class_ids, keep))[..., tf.newaxis],
         tf.gather(class_scores, keep)[..., tf.newaxis]
         ], axis=1)
 
-    # Pad with zeros if detections < DETECTION_MAX_INSTANCES
+    # 如果detections < DETECTION_MAX_INSTANCES，进行zero pad
     gap = config.DETECTION_MAX_INSTANCES - tf.shape(detections)[0]
     detections = tf.pad(detections, [(0, gap), (0, 0)], "CONSTANT")
     return detections
 
 
 class DetectionLayer(KE.Layer):
-    """Takes classified proposal boxes and their bounding box deltas and
-    returns the final detection boxes.
+    """输分类后的proposal boxes及其bouding boxes deltas并返回最终detection boxes。
 
     Returns:
-    [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)] where
-    coordinates are normalized.
+    [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)]， 
+    归一化后的坐标值。
     """
 
     def __init__(self, config=None, **kwargs):
@@ -723,24 +715,21 @@ class DetectionLayer(KE.Layer):
         frcnn_bbox = inputs[2]
         image_meta = inputs[3]
 
-        # Get windows of images in normalized coordinates. Windows are the area
-        # in the image that excludes the padding.
-        # Use the shape of the first image in the batch to normalize the window
-        # because we know that all images get resized to the same size.
+        # 获取images的widows归一化后的坐标值，Windows是图像除去padding后的区域。
+        # 使用batch中第一个图像的形状来归一化窗口，
+        # 因为所有图像都会resize为相同的大小。
         m = parse_image_meta_graph(image_meta)
         image_shape = m['image_shape'][0]
         window = norm_boxes_graph(m['window'], image_shape[:2])
         
-        # Run detection refinement graph on each item in the batch
+        # 对batch中每一项运行detection refinement graph
         detections_batch = utils.batch_slice(
-        #    [rois, mrcnn_class, mrcnn_bbox, window],
             [rois, frcnn_class, frcnn_bbox, window],
             lambda x, y, w, z: refine_detections_graph(x, y, w, z, self.config),
             self.config.IMAGES_PER_GPU)
 
-        # Reshape output
-        # [batch, num_detections, (y1, x1, y2, x2, class_score)] in
-        # normalized coordinates
+        # Reshape输出
+        # [batch, num_detections, (y1, x1, y2, x2, class_score)]，归一化后的坐标值。
         return tf.reshape(
             detections_batch,
             [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6])
@@ -754,64 +743,60 @@ class DetectionLayer(KE.Layer):
 ############################################################
 
 def rpn_graph(feature_map, anchors_per_location, anchor_stride):
-    """Builds the computation graph of Region Proposal Network.
-
-    feature_map: backbone features [batch, height, width, depth]
-    anchors_per_location: number of anchors per pixel in the feature map
-    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
-                   every pixel in the feature map), or 2 (every other pixel).
+    """创建 Region Proposal Network graph。
+    Inputs:
+        feature_map: 骨干网络特征层[batch, height, width, depth]。
+        anchors_per_location: 每个像素点的anchor数量。
+        anchor_stride: 决定anchor的密度，通常设置为1(特征层中每个像素点)或2(每隔一个像素点)。
 
     Returns:
-        rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
-        rpn_probs: [batch, H, W, 2] Anchor classifier probabilities.
-        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
-                  applied to anchors.
+        rpn_logits: [batch, H, W, 2]，anchor分类器的logits(在softmax之前)。
+        rpn_probs: [batch, H, W, 2]，anchor分类器的概率。
+        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))]，将应用于anchors的deltas。
     """
-    # TODO: check if stride of 2 causes alignment issues if the featuremap
-    #       is not even.
-    # Shared convolutional base of the RPN
+    # TODO: 如果featuremap不是偶数，检查stride为2是否会导致对齐问题。
+    # 基于RPN的共享卷积层
     shared = KL.Conv2D(512, (3, 3), padding='same', activation='relu',
                        strides=anchor_stride,
                        name='rpn_conv_shared')(feature_map)
 
-    # Anchor Score. [batch, height, width, anchors per location * 2].
+    # Anchor的得分，[batch, height, width, anchors per location * 2]。
     x = KL.Conv2D(2 * anchors_per_location, (1, 1), padding='valid',
                   activation='linear', name='rpn_class_raw')(shared)
 
-    # Reshape to [batch, anchors, 2]
+    # Reshape为[batch, anchors, 2]
     rpn_class_logits = KL.Lambda(
         lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 2]))(x)
 
-    # Softmax on last dimension of BG/FG.
+    # 背景/前景最后一维的Softmax
     rpn_probs = KL.Activation(
         "softmax", name="rpn_class_xxx")(rpn_class_logits)
 
-    # Bounding box refinement. [batch, H, W, anchors per location, depth]
-    # where depth is [x, y, log(w), log(h)]
+    # Bounding box调整，[batch, H, W, anchors per location, depth]。
+    # depth为[x, y, log(w), log(h)]。
     x = KL.Conv2D(anchors_per_location * 4, (1, 1), padding="valid",
                   activation='linear', name='rpn_bbox_pred')(shared)
 
-    # Reshape to [batch, anchors, 4]
+    # Reshape为[batch, anchors, 4]
     rpn_bbox = KL.Lambda(lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 4]))(x)
 
     return [rpn_class_logits, rpn_probs, rpn_bbox]
 
 
 def build_rpn_model(anchor_stride, anchors_per_location, depth):
-    """Builds a Keras model of the Region Proposal Network.
-    It wraps the RPN graph so it can be used multiple times with shared
-    weights.
+    """创建Region Proposal Network的Keras模型。
 
-    anchors_per_location: number of anchors per pixel in the feature map
-    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
-                   every pixel in the feature map), or 2 (every other pixel).
-    depth: Depth of the backbone feature map.
+    将RPN graph包装了在内，因此可以使用共享权重多次使用它。
 
-    Returns a Keras Model object. The model outputs, when called, are:
-    rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
-    rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
-    rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
-                applied to anchors.
+    anchors_per_location: 特征图中每个像素点的anchor数量。
+    anchor_stride: 决定anchor的密度，通常设置为1(特征层中每个像素点)或2(每隔一个像素点)。
+    depth: 骨干网络特征层的深度。
+
+    返回Keras模型对象。 
+    该模型被应用后的输出为:
+    rpn_logits: [batch, H, W, 2]，anchor分类器的logits(在softmax之前)。
+    rpn_probs: [batch, W, W, 2]，anchor分类器的概率。
+    rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))]，将应用于anchors的deltas。
     """
     input_feature_map = KL.Input(shape=[None, None, depth],
                                  name="input_rpn_feature_map")
@@ -825,29 +810,25 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 
 def fpn_classifier_graph(rois, feature_maps, image_meta,
                          pool_size, num_classes, train_bn=True):
-    """Builds the computation graph of the feature pyramid network classifier
-    and regressor heads.
-
-    rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
-          coordinates.
-    feature_maps: List of feature maps from diffent layers of the pyramid,
-                  [P2, P3, P4, P5]. Each has a different resolution.
-    - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-    pool_size: The width of the square feature map generated from ROI Pooling.
-    num_classes: number of classes, which determines the depth of the results
-    train_bn: Boolean. Train or freeze Batch Norm layres
+    """构建Feature Pyramid Network的分类器端和回归器端。
+    rois: [batch, num_rois, (y1, x1, y2, x2)] 归一化坐标值后的Proposal boxes。
+    feature_maps: 图像金字塔中不同层特征图的列表，[P2, P3, P4, P5]，
+                  每层有不同的分辨率。
+    - image_meta: [batch, (meta data)]，图像信息，参见compose_image_meta()。
+    pool_size: ROI Pooling生成的正方形特征图的width。
+    num_classes: 类别的数量。
+    train_bn: Bool型，是否训练BN层。
 
     Returns:
-        logits: [N, NUM_CLASSES] classifier logits (before softmax)
-        probs: [N, NUM_CLASSES] classifier probabilities
-        bbox_deltas: [N, (dy, dx, log(dh), log(dw))] Deltas to apply to
-                     proposal boxes
+        logits: [N, NUM_CLASSES]，anchor分类器的logits(在softmax之前)。
+        probs: [N, NUM_CLASSES]，anchor分类器的概率。
+        bbox_deltas: [N, (dy, dx, log(dh), log(dw))]，将应用于anchors的deltas。
     """
     # ROI Pooling
     # Shape: [batch, num_boxes, pool_height, pool_width, channels]
     x = PyramidROIAlign([pool_size, pool_size],
                         name="roi_align_classifier")([rois, image_meta] + feature_maps)
-    # Two 1024 FC layers (implemented with Conv2D for consistency)
+    # 2个深度为1024全连接层(使用Conv2D实现，确保一致性)
     x = KL.TimeDistributed(KL.Conv2D(1024, (pool_size, pool_size), padding="valid"),
                            name="frcnn_class_conv1")(x)
     x = KL.TimeDistributed(BatchNorm(), name='frcnn_class_bn1')(x, training=train_bn)
@@ -859,16 +840,16 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                        name="pool_squeeze")(x)
 
-    # Classifier head
+    # 分类器端
     frcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
                                             name='frcnn_class_logits')(shared)
     frcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
                                      name="frcnn_class")(frcnn_class_logits)
-    # BBox head
+    # BBox端
     # [batch, boxes, num_classes * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
                            name='frcnn_bbox_fc')(shared)
-    # Reshape to [batch, boxes, num_classes, (dy, dx, log(dh), log(dw))]
+    # Reshape为[batch, boxes, num_classes, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
     frcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="frcnn_bbox")(x)
 
@@ -879,8 +860,8 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
 ############################################################
 
 def smooth_l1_loss(y_true, y_pred):
-    """Implements Smooth-L1 loss.
-    y_true and y_pred are typicallly: [N, 4], but could be any shape.
+    """Smooth-L1 loss的实现。
+    y_true和y_pred通常为: [N, 4],但也可能其他任何形状。
     """
     diff = K.abs(y_true - y_pred)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
@@ -889,23 +870,22 @@ def smooth_l1_loss(y_true, y_pred):
 
 
 def rpn_class_loss_graph(rpn_match, rpn_class_logits):
-    """RPN anchor classifier loss.
+    """RPN anchor分类器loss。
 
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
-               -1=negative, 0=neutral anchor.
-    rpn_class_logits: [batch, anchors, 2]. RPN classifier logits for FG/BG.
+    rpn_match: [batch, anchors, 1]，anchor匹配类型，1=positive，
+               -1=negative，0=neutral anchor。
+    rpn_class_logits: [batch, anchors, 2]，RPN分类器的logits(背景/前景)。
     """
-    # Squeeze last dim to simplify
+    # Squeeze最后一维以简化。
     rpn_match = tf.squeeze(rpn_match, -1)
-    # Get anchor classes. Convert the -1/+1 match to 0/1 values.
+    # 获取anchor的类别，将-1/+1匹配转换为0/1值。
     anchor_class = K.cast(K.equal(rpn_match, 1), tf.int32)
-    # Positive and Negative anchors contribute to the loss,
-    # but neutral anchors (match value = 0) don't.
+    # 正/负anchors会影响loss，但neutral anchors（对应value=0）则不会。
     indices = tf.where(K.not_equal(rpn_match, 0))
-    # Pick rows that contribute to the loss and filter out the rest.
+    # 选择影响损失的raws并过滤掉其余部分。
     rpn_class_logits = tf.gather_nd(rpn_class_logits, indices)
     anchor_class = tf.gather_nd(anchor_class, indices)
-    # Crossentropy loss
+    # Crossentropy loss，交叉熵loss。
     loss = K.sparse_categorical_crossentropy(target=anchor_class,
                                              output=rpn_class_logits,
                                              from_logits=True)
@@ -914,30 +894,29 @@ def rpn_class_loss_graph(rpn_match, rpn_class_logits):
 
 
 def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
-    """Return the RPN bounding box loss graph.
+    """返回RPN bounding box的loss graph。
 
-    config: the model config object.
-    target_bbox: [batch, max positive anchors, (dy, dx, log(dh), log(dw))].
-        Uses 0 padding to fill in unsed bbox deltas.
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
-               -1=negative, 0=neutral anchor.
+    config: 模型配置项的实例对象。
+    target_bbox: [batch, max positive anchors, (dy, dx, log(dh), log(dw))]，
+                 用zero padding来填充为使用的bbox deltas。
+                 （Uses 0 padding to fill in unsed bbox deltas.）
+    rpn_match: [batch, anchors, 1]，anchor匹配类型，1=positive，
+               -1=negative，0=neutral anchor。
     rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
     """
-    # Positive anchors contribute to the loss, but negative and
-    # neutral anchors (match value of 0 or -1) don't.
+    # 正anchors会影响loss，但负/neutral anchors（对应value=-1/0）则不会。
     rpn_match = K.squeeze(rpn_match, -1)
     indices = tf.where(K.equal(rpn_match, 1))
 
-    # Pick bbox deltas that contribute to the loss
+    # 选择影响损失的raws并过滤掉其余部分。
     rpn_bbox = tf.gather_nd(rpn_bbox, indices)
 
-    # Trim target bounding box deltas to the same length as rpn_bbox.
+    # 将目标bounding box deltas修剪为与rpn_bbox相同的长度。
     batch_counts = K.sum(K.cast(K.equal(rpn_match, 1), tf.int32), axis=1)
     target_bbox = batch_pack_graph(target_bbox, batch_counts,
                                    config.IMAGES_PER_GPU)
 
-    # TODO: use smooth_l1_loss() rather than reimplementing here
-    #       to reduce code duplication
+    # TODO: 使用smooth_l1_loss（）而不是在这里重新实现以减少代码重复。
     diff = K.abs(target_bbox - rpn_bbox)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
@@ -948,60 +927,54 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
 def frcnn_class_loss_graph(target_class_ids, pred_class_logits,
                            active_class_ids):
-    """Loss for the classifier head of Mask RCNN.
+    """Faster R-CNN分类器端的loss。
 
-    target_class_ids: [batch, num_rois]. Integer class IDs. Uses zero
-        padding to fill in the array.
-    pred_class_logits: [batch, num_rois, num_classes]
-    active_class_ids: [batch, num_classes]. Has a value of 1 for
-        classes that are in the dataset of the image, and 0
-        for classes that are not in the dataset.
+    target_class_ids: [batch, num_rois]，int型，用zero padding填充array。
+    pred_class_logits: [batch, num_rois, num_classes]。
+    active_class_ids: [batch, num_classes]，
+                      对于图像数据集中的类，值为1;对于不在数据集中的类，值为0。
     """
-    # During model building, Keras calls this function with
-    # target_class_ids of type float32. Unclear why. Cast it
-    # to int to get around it.
+    # 在模型构建期间，Keras使用float32类型的target_class_ids调用此函数。
+    # 原因未知,将其转换为int。
     target_class_ids = tf.cast(target_class_ids, 'int64')
 
-    # Find predictions of classes that are not in the dataset.
+    # 找出不在数据集中的类的预测
     pred_class_ids = tf.argmax(pred_class_logits, axis=2)
-    # TODO: Update this line to work with batch > 1. Right now it assumes all
-    #       images in a batch have the same active_class_ids
+    # TODO: 更新此行以使用batch> 1，现在它假设batch中的所有图像都具有相同的active_class_ids。
     pred_active = tf.gather(active_class_ids[0], pred_class_ids)
 
     # Loss
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=target_class_ids, logits=pred_class_logits)
 
-    # Erase losses of predictions of classes that are not in the active
-    # classes of the image.
+    # 去除图像中未激活类的loss
     loss = loss * pred_active
 
-    # Computer loss mean. Use only predictions that contribute
-    # to the loss to get a correct mean.
+    # 计算loss mean，仅使用对loss有影响的预测来获得正确的mean。
     loss = tf.reduce_sum(loss) / tf.reduce_sum(pred_active)
     return loss
 
 
 def frcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
-    """Loss for Mask R-CNN bounding box refinement.
+    """Loss for Mask R-CNN bounding box refinement.Faster R-CNN bbox的loss
 
     target_bbox: [batch, num_rois, (dy, dx, log(dh), log(dw))]
-    target_class_ids: [batch, num_rois]. Integer class IDs.
+    target_class_ids: [batch, num_rois]，int型。
     pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
     """
-    # Reshape to merge batch and roi dimensions for simplicity.
+    # 为简单起见，reshape以合并batch和roi维度。
     target_class_ids = K.reshape(target_class_ids, (-1,))
     target_bbox = K.reshape(target_bbox, (-1, 4))
     pred_bbox = K.reshape(pred_bbox, (-1, K.int_shape(pred_bbox)[2], 4))
 
-    # Only positive ROIs contribute to the loss. And only
-    # the right class_id of each ROI. Get their indicies.
+    # 只有正ROIs（并且每个ROI只有正确的class_id）会造成loss。
+    # 获取其索引。
     positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
     positive_roi_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_roi_ix), tf.int64)
     indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
 
-    # Gather the deltas (predicted and true) that contribute to loss
+    # 收集导致loss的deltas（预测和真实）
     target_bbox = tf.gather(target_bbox, positive_roi_ix)
     pred_bbox = tf.gather_nd(pred_bbox, indices)
 
@@ -1018,22 +991,21 @@ def frcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
 ############################################################
 
 def load_image_gt(dataset, config, image_id, augment=False, augmentation=None):
-    """Load and return ground truth data for an image (image, bounding boxes).
+    """加载并返回一张图片的ground truth(image, bounding boxes)。
 
-    augment: (Depricated. Use augmentation instead). If true, apply random
-        image augmentation. Currently, only horizontal flipping is offered.
-    augmentation: Optional. An imgaug (https://github.com/aleju/imgaug) augmentation.
-        For example, passing imgaug.augmenters.Fliplr(0.5) flips images
-        right/left 50% of the time.
+    augment: (已过时，使用augmentation替代)。若值为true,应用随机图像增强。
+             现在只提供水平反转。
+    augmentation: 可选项。一个图像数据扩充库(https://github.com/aleju/imgaug)。
+                  例如，传递imgaug.augmenters.Fliplr（0.5）会左/右翻转50％的图像。
 
 
     Returns:
     image: [height, width, 3]
-    shape: the original shape of the image before resizing and cropping.
-    class_ids: [instance_count] Integer class IDs
+    shape: 在调整大小和裁剪之前图像的原始形状。
+    class_ids: [instance_count]，int型。
     bbox: [instance_count, (y1, x1, y2, x2)]
     """
-    # Load image
+    # 加载图像数据
     image = dataset.load_image(image_id)
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(
@@ -1043,49 +1015,45 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None):
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
 
-    # Random horizontal flips.
-    # TODO: will be removed in a future update in favor of augmentation
+    # 随机水平反转。
+    # TODO: 将用Augmentation替代。
     if augment:
         logging.warning("'augment' is depricated. Use 'augmentation' instead.")
         if random.randint(0, 1):
             image = np.fliplr(image)
     
     # Augmentation
-    # This requires the imgaug lib (https://github.com/aleju/imgaug)
-    # TODO: modify for bboxes without mask.
+    # 需要引入库(https://github.com/aleju/imgaug)。
     if augmentation:
         import imgaug
 
-        # Augmentors that are safe to apply to masks
-        # Some, such as Affine, have settings that make them unsafe, so always
-        # test your augmentation on masks
+        # TODO：弄清具体如何使用。
         MASK_AUGMENTERS = ["Sequential", "SomeOf", "OneOf", "Sometimes",
                            "Fliplr", "Flipud", "CropAndPad",
                            "Affine", "PiecewiseAffine"]
 
         def hook(images, augmenter, parents, default):
-            """Determines which augmenters to apply to masks."""
+            """确定应用在mask上的方法。"""
             return (augmenter.__class__.__name__ in MASK_AUGMENTERS)
 
-        # Store shapes before augmentation to compare
+        # 增强前先保存shapes，以便做比较
         image_shape = image.shape
-        # Make augmenters deterministic to apply similarly to images and masks
+        # 使增augmenters具有确定性，以便类似地应用于图像和masks
         det = augmentation.to_deterministic()
         image = det.augment_image(image)
-        # Verify that shapes didn't change
+        # 验证其shapes未改变
         assert image.shape == image_shape, "Augmentation shouldn't change image size"
 
-    # load objects in an image
+    # 加载单张图像中的检测对象
     class_ids, bbox = dataset.load_objs(image_id, scale, padding)
     # Active classes
-    # Different datasets have different classes, so track the
-    # classes supported in the dataset of this image.
+    # 不同的数据集具有不同的类，追踪此图像的数据集中支持的类。
     active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
     source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
     active_class_ids[source_class_ids] = 1
 
 
-    # Image meta data
+    # 图像元数据
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
 
@@ -1093,9 +1061,8 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None):
 
 
 def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, config):
-    """Generate targets for training Stage 2 classifier heads.
-    This is not used in normal training. It's useful for debugging or to train
-    the Mask RCNN heads without using the RPN head.
+    """生成用于训练Stage 2分类器端的targets。
+    在常规训练中不使用，它可用于调试或训练Faster RCNN端而无需使用RPN端。
 
     Inputs:
     rpn_rois: [N, (y1, x1, y2, x2)] proposal boxes.
@@ -1105,9 +1072,8 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, config):
 
     Returns:
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]
-    class_ids: [TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
-    bboxes: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (y, x, log(h), log(w))]. Class-specific
-            bbox refinements.
+    class_ids: [TRAIN_ROIS_PER_IMAGE]，int型。
+    bboxes: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (y, x, log(h), log(w))]，特定于类的bbox优化。
     """
     assert rpn_rois.shape[0] > 0
     assert gt_class_ids.dtype == np.int32, "Expected int but got {}".format(
@@ -1115,76 +1081,73 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, config):
     assert gt_boxes.dtype == np.int32, "Expected int but got {}".format(
         gt_boxes.dtype)
 
-    # It's common to add GT Boxes to ROIs but we don't do that here because
-    # according to XinLei Chen's paper, it doesn't help.
+    # 将GT Box添加到ROIs是很常见的，但我们不这样做，因为根据XinLei Chen的论文，它没有帮助。
 
-    # Trim empty padding in gt_boxes part
+    # 修剪gt_boxes部分中的empty padding
     instance_ids = np.where(gt_class_ids > 0)[0]
     assert instance_ids.shape[0] > 0, "Image must contain instances."
     gt_class_ids = gt_class_ids[instance_ids]
     gt_boxes = gt_boxes[instance_ids]
 
-    # Compute areas of ROIs and ground truth boxes.
+    # Compute areas of ROIs and ground truth boxes.计算ROIs和ground truth boxes的区域
     rpn_roi_area = (rpn_rois[:, 2] - rpn_rois[:, 0]) * \
         (rpn_rois[:, 3] - rpn_rois[:, 1])
     gt_box_area = (gt_boxes[:, 2] - gt_boxes[:, 0]) * \
         (gt_boxes[:, 3] - gt_boxes[:, 1])
 
-    # Compute overlaps [rpn_rois, gt_boxes]
+    # 计算overlaps [rpn_rois, gt_boxes]
     overlaps = np.zeros((rpn_rois.shape[0], gt_boxes.shape[0]))
     for i in range(overlaps.shape[1]):
         gt = gt_boxes[i]
         overlaps[:, i] = utils.compute_iou(
             gt, rpn_rois, gt_box_area[i], rpn_roi_area)
 
-    # Assign ROIs to GT boxes
+    # 将ROIs分配给GT框
     rpn_roi_iou_argmax = np.argmax(overlaps, axis=1)
     rpn_roi_iou_max = overlaps[np.arange(
         overlaps.shape[0]), rpn_roi_iou_argmax]
-    # GT box assigned to each ROI
+    # 分配给每个ROI的GT框
     rpn_roi_gt_boxes = gt_boxes[rpn_roi_iou_argmax]
     rpn_roi_gt_class_ids = gt_class_ids[rpn_roi_iou_argmax]
 
-    # Positive ROIs are those with >= 0.5 IoU with a GT box.
+    # 正ROIs满足与GT的IoU >= 0.5。
     fg_ids = np.where(rpn_roi_iou_max > 0.5)[0]
 
-    # Negative ROIs are those with max IoU 0.1-0.5 (hard example mining)
+    # 负ROIs是最大IoU在0.1-0.5 (hard example mining)
     # TODO: To hard example mine or not to hard example mine, that's the question
-#     bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
+    # bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
     bg_ids = np.where(rpn_roi_iou_max < 0.5)[0]
 
-    # Subsample ROIs. Aim for 33% foreground.
-    # FG
+    # 对ROIs抽样，达到33%为前景。
+    # 前景FG
     fg_roi_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROI_POSITIVE_RATIO)
     if fg_ids.shape[0] > fg_roi_count:
         keep_fg_ids = np.random.choice(fg_ids, fg_roi_count, replace=False)
     else:
         keep_fg_ids = fg_ids
-    # BG
+    # 背景BG
     remaining = config.TRAIN_ROIS_PER_IMAGE - keep_fg_ids.shape[0]
     if bg_ids.shape[0] > remaining:
         keep_bg_ids = np.random.choice(bg_ids, remaining, replace=False)
     else:
         keep_bg_ids = bg_ids
-    # Combine indicies of ROIs to keep
+    # 要保留的ROIs的索引
     keep = np.concatenate([keep_fg_ids, keep_bg_ids])
     # Need more?
     remaining = config.TRAIN_ROIS_PER_IMAGE - keep.shape[0]
     if remaining > 0:
-        # Looks like we don't have enough samples to maintain the desired
-        # balance. Reduce requirements and fill in the rest. This is
-        # likely different from the Mask RCNN paper.
+        # 我们没有足够的样本来维持期望的平衡，降低要求来填充余下部分。
 
-        # There is a small chance we have neither fg nor bg samples.
+        # 有很小的可能性既没得到前景，也没得到背景
         if keep.shape[0] == 0:
-            # Pick bg regions with easier IoU threshold
+            # 用更方便的IOU阀值选择背景区域
             bg_ids = np.where(rpn_roi_iou_max < 0.5)[0]
             assert bg_ids.shape[0] >= remaining
             keep_bg_ids = np.random.choice(bg_ids, remaining, replace=False)
             assert keep_bg_ids.shape[0] == remaining
             keep = np.concatenate([keep, keep_bg_ids])
         else:
-            # Fill the rest with repeated bg rois.
+            # 用重复的背景ROIs来填充余下部分
             keep_extra_ids = np.random.choice(
                 keep_bg_ids, remaining, replace=True)
             keep = np.concatenate([keep, keep_extra_ids])
@@ -1192,23 +1155,23 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, config):
         "keep doesn't match ROI batch size {}, {}".format(
             keep.shape[0], config.TRAIN_ROIS_PER_IMAGE)
 
-    # Reset the gt boxes assigned to BG ROIs.
+    # 重设分配给BG ROIs的GT boxes
     rpn_roi_gt_boxes[keep_bg_ids, :] = 0
     rpn_roi_gt_class_ids[keep_bg_ids] = 0
 
-    # For each kept ROI, assign a class_id, and for FG ROIs also add bbox refinement.
+    # 给每个保留下来的ROI分配一个class_id, 对于前景ROIs同时需要添加bbox refinement.
     rois = rpn_rois[keep]
     roi_gt_boxes = rpn_roi_gt_boxes[keep]
     roi_gt_class_ids = rpn_roi_gt_class_ids[keep]
     roi_gt_assignment = rpn_roi_iou_argmax[keep]
 
-    # Class-aware bbox deltas. [y, x, log(h), log(w)]
+    # Class-aware的bbox deltas. [y, x, log(h), log(w)]
     bboxes = np.zeros((config.TRAIN_ROIS_PER_IMAGE,
                        config.NUM_CLASSES, 4), dtype=np.float32)
     pos_ids = np.where(roi_gt_class_ids > 0)[0]
     bboxes[pos_ids, roi_gt_class_ids[pos_ids]] = utils.box_refinement(
         rois[pos_ids], roi_gt_boxes[pos_ids, :4])
-    # Normalize bbox refinements
+    # 归一化bbox refinements
     bboxes /= config.BBOX_STD_DEV
 
 
@@ -1216,15 +1179,14 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, config):
 
 
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
-    """Given the anchors and GT boxes, compute overlaps and identify positive
-    anchors and deltas to refine them to match their corresponding GT boxes.
+    """给定anchors和GT boxes，计算overlaps并识别正anchors和deltas来优化它们以匹配其对应的GT boxes。
 
     anchors: [num_anchors, (y1, x1, y2, x2)]
-    gt_class_ids: [num_gt_boxes] Integer class IDs.
+    gt_class_ids: [num_gt_boxes]，int型
     gt_boxes: [num_gt_boxes, (y1, x1, y2, x2)]
 
     Returns:
-    rpn_match: [N] (int32) matches between anchors and GT boxes.
+    rpn_match: [N] (int32)，anchors和GT boxes之间的匹配，
                1 = positive anchor, -1 = negative anchor, 0 = neutral
     rpn_bbox: [N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
     """
@@ -1233,74 +1195,71 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
-    # Handle COCO crowds
-    # A crowd box in COCO is a bounding box around several instances. Exclude
-    # them from training. A crowd box is given a negative class ID.
+    # 处理COCO的crowds类。
+    # COCO中的crowd box是对应几个对象的bouding box，将其从训练中去掉。
+    # 给crowd box赋予negative class ID。
     crowd_ix = np.where(gt_class_ids < 0)[0]
     if crowd_ix.shape[0] > 0:
-        # Filter out crowds from ground truth class IDs and boxes
+        # 从ground truth类IDs和boxes中率掉crowds
         non_crowd_ix = np.where(gt_class_ids > 0)[0]
         crowd_boxes = gt_boxes[crowd_ix]
         gt_class_ids = gt_class_ids[non_crowd_ix]
         gt_boxes = gt_boxes[non_crowd_ix]
-        # Compute overlaps with crowd boxes [anchors, crowds]
+        # 计算与crowds boxes的重叠[anchors, crowds]
         crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
         crowd_iou_max = np.amax(crowd_overlaps, axis=1)
         no_crowd_bool = (crowd_iou_max < 0.001)
     else:
-        # All anchors don't intersect a crowd
+        # 所有anchors都不与crowd相交
         no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
 
-    # Compute overlaps [num_anchors, num_gt_boxes]
+    # 计算overlaps [num_anchors, num_gt_boxes]
     overlaps = utils.compute_overlaps(anchors, gt_boxes)
 
-    # Match anchors to GT Boxes
-    # If an anchor overlaps a GT box with IoU >= 0.7 then it's positive.
-    # If an anchor overlaps a GT box with IoU < 0.3 then it's negative.
-    # Neutral anchors are those that don't match the conditions above,
-    # and they don't influence the loss function.
-    # However, don't keep any GT box unmatched (rare, but happens). Instead,
-    # match it to the closest anchor (even if its max IoU is < 0.3).
-    #
-    # 1. Set negative anchors first. They get overwritten below if a GT box is
-    # matched to them. Skip boxes in crowd areas.
+    # 将anchors匹配给GT Boxes
+    # 如果一个anchor与一个GT box重叠的IoU >= 0.7，则为正样本。
+    # 如果一个anchor与一个GT box重叠的IoU <= 0.3，则为负样本。
+    # Neutral anchors是那些不满足上述两种情况的,但其并不影响loss function。
+    # 但是，不要让任何GT box无匹配（很少见，但会发生），将其与最近的anchor匹配（即使其最大IoU <0.3）。
+
+    # 1. 先设置负样本anchors。
+    # 如果GT box与它们匹配，在下面会将其overwrite，跳过在crowd区域中的boxes。
     anchor_iou_argmax = np.argmax(overlaps, axis=1)
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
-    # 2. Set an anchor for each GT box (regardless of IoU value).
-    # TODO: If multiple anchors have the same IoU match all of them
+    # 2. 为每个GT box设置一个anchor（不论IoU值如何）
+    # TODO: 如果多个anchors具有相同的IoU匹配全部
     gt_iou_argmax = np.argmax(overlaps, axis=0)
     rpn_match[gt_iou_argmax] = 1
-    # 3. Set anchors with high overlap as positive.
+    # 3. 将高重叠的anchor设置为正
     rpn_match[anchor_iou_max >= 0.7] = 1
 
-    # Subsample to balance positive and negative anchors
-    # Don't let positives be more than half the anchors
+    # 抽样以平衡正负anchors
+    # 不要让正样本超过anchors的一般
     ids = np.where(rpn_match == 1)[0]
     extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
-        # Reset the extra ones to neutral
+        # 将额外的设置为natural
         ids = np.random.choice(ids, extra, replace=False)
         rpn_match[ids] = 0
-    # Same for negative proposals
+    # 负样本proposal也是如此
     ids = np.where(rpn_match == -1)[0]
     extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE -
                         np.sum(rpn_match == 1))
     if extra > 0:
-        # Rest the extra ones to neutral
+        # 将额外的设置为natural
         ids = np.random.choice(ids, extra, replace=False)
         rpn_match[ids] = 0
 
-    # For positive anchors, compute shift and scale needed to transform them
-    # to match the corresponding GT boxes.
+    # 对于正样本anchors，计算所需的shifts和scale来将其转换以匹配相应的GT boxes 
     ids = np.where(rpn_match == 1)[0]
-    ix = 0  # index into rpn_bbox
-    # TODO: use box_refinement() rather than duplicating the code here
+    ix = 0  # rpn_bbox的索引
+    # TODO: 使用box_refinement（），而不是在这里重复代码
     for i, a in zip(ids, anchors[ids]):
-        # Closest gt box (it might have IoU < 0.7)
+        # 最相近的gt box (或许IoU < 0.7)
         gt = gt_boxes[anchor_iou_argmax[i]]
 
-        # Convert coordinates to center plus width/height.
+        # 将坐标转换为中心+宽度/高度。
         # GT Box
         gt_h = gt[2] - gt[0]
         gt_w = gt[3] - gt[1]
@@ -1312,14 +1271,14 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
         a_center_y = a[0] + 0.5 * a_h
         a_center_x = a[1] + 0.5 * a_w
 
-        # Compute the bbox refinement that the RPN should predict.
+        # 计算RPN应预测的bbox refinement
         rpn_bbox[ix] = [
             (gt_center_y - a_center_y) / a_h,
             (gt_center_x - a_center_x) / a_w,
             np.log(gt_h / a_h),
             np.log(gt_w / a_w),
         ]
-        # Normalize
+        # 归一化 Normalize
         rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
         ix += 1
 
